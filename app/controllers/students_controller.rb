@@ -11,7 +11,7 @@ class StudentsController < ApplicationController
 
     students = students.map do |student|
       student.attributes.slice(*NEEDED_ATTRIBUTES)
-             .merge({ class_id: class_id, school_id: school_id})
+             .merge({ class_id: class_id, school_id: school_id })
     end
 
     render json: { data: students }, status: 200
@@ -20,18 +20,11 @@ class StudentsController < ApplicationController
   def create
     school_id = params[:student][:school_id]
     @student = Student.new(student_params)
-    if @student.save && school_id_valid?
-      token = @student.generate_token
-      response.headers['X-Auth-Token'] = token
 
-      @student = @student.attributes.slice(*NEEDED_ATTRIBUTES)
-                         .merge({ class_id: params[:student][:class_id],
-                                  school_id: school_id })
-
-      render json: @student, status: :created, headers: { 'X-Auth-Token': token }
+    if student_saved_and_valid_school?(school_id)
+      render_student_with_token
     else
-      p @student.errors
-      render json: { error: 'Invalid input' }, status: 405
+      render_invalid_input_error
     end
   end
 
@@ -39,15 +32,9 @@ class StudentsController < ApplicationController
     @student = Student.find(params[:id])
     token = request.headers["Authorization"].split(" ").last
 
-    if @student.valid_token?(token)
-      if @student.destroy
-        head :no_content
-      else
-        render json: { error: "Невозможно удалить студента" }, status: 400
-      end
-    else
-      render json: { error: "Некорректная авторизация" }, status: :unauthorized
-    end
+    unauthorized unless @student.valid_token?(token)
+
+    destroy_student
   rescue ActiveRecord::RecordNotFound
     render json: { error: "Студент не найден" }, status: :not_found
   end
@@ -58,7 +45,38 @@ class StudentsController < ApplicationController
     params.require(:student).permit(:first_name, :last_name, :surname, :class_id)
   end
 
-  def school_id_valid?
-    (params[:student][:school_id] == @student.school_class.school.id)
+  def school_id_valid?(school_id)
+    (school_id == @student.school_class.school.id)
+  end
+
+  def student_saved_and_valid_school?(school_id)
+    @student.save && school_id_valid?(school_id)
+  end
+
+  def unauthorized
+    render json: { error: "Некорректная авторизация" }, status: :unauthorized
+  end
+
+  def render_student_with_token
+    token = @student.generate_token
+    response.headers['X-Auth-Token'] = token
+
+    @student = @student.attributes.slice(*NEEDED_ATTRIBUTES)
+                       .merge({ class_id: params[:student][:class_id],
+                                school_id: params[:student][:school_id] })
+
+    render json: @student, status: :created, headers: { 'X-Auth-Token': token }
+  end
+
+  def render_invalid_input_error
+    render json: { error: 'Invalid input' }, status: 405
+  end
+
+  def destroy_student
+    if @student.destroy
+      head :no_content
+    else
+      render json: { error: "Невозможно удалить студента" }, status: 400
+    end
   end
 end
